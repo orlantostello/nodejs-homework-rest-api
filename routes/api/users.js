@@ -4,7 +4,11 @@ const fs = require("fs/promises");
 const Jimp = require("jimp");
 
 const { User } = require("../../models");
+const { joiEmailSchema } = require("../../models/user");
 const { authentication, upload } = require("../../middlewares");
+const { sendEmail } = require("../../helpers");
+
+const { SITE_NAME } = process.env;
 
 const router = express.Router();
 
@@ -50,5 +54,71 @@ router.patch(
     }
   }
 );
+
+router.get("/verify/:verificationToken", async (req, res, next) => {
+  try {
+    const { verificationToken } = req.params;
+
+    const user = await User.findOne({ verificationToken });
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    await User.findByIdAndUpdate(user._id, {
+      verificationToken: null,
+      verify: true,
+    });
+
+    res.json({ message: "Verification successful" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/verify", async (req, res, next) => {
+  try {
+    const { error } = joiEmailSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({
+        message: error.message,
+      });
+    }
+
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({
+        message: "missing required field email",
+      });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({
+        message: "Email is wrong",
+      });
+    }
+
+    if (user.verify) {
+      return res.status(400).json({
+        message: "Verification has already been passed",
+      });
+    }
+
+    const { verificationToken } = user;
+    const data = {
+      to: email,
+      subject: "Подтверждение email",
+      html: `<a target="_blank" href="${SITE_NAME}/users/verify/${verificationToken}">Подтвердить email</a>`,
+    };
+
+    await sendEmail(data);
+
+    res.json({ message: "Verification email sent" });
+  } catch (error) {
+    next(error);
+  }
+});
 
 module.exports = router;
